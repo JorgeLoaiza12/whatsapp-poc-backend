@@ -1,0 +1,117 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id               String            @id @default(cuid())
+  name             String
+  slug             String            @unique
+  users            User[]
+  whatsappAccounts WhatsAppAccount[]
+  conversations    Conversation[]
+  contacts         Contact[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@map("tenants")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model WhatsAppAccount {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  wabaId        String
+  phoneNumberId String   @unique
+  phoneNumber   String
+  accessToken   String
+  displayName   String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("whatsapp_accounts")
+}
+
+model Contact {
+  id            String         @id @default(cuid())
+  tenantId      String
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  waPhone       String
+  name          String?
+  conversations Conversation[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@unique([tenantId, waPhone])
+  @@map("contacts")
+}
+
+model Conversation {
+  id            String    @id @default(cuid())
+  tenantId      String
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contactId     String
+  contact       Contact   @relation(fields: [contactId], references: [id])
+  phoneNumberId String
+  lastMessageAt DateTime?
+  messages      Message[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([tenantId, contactId, phoneNumberId])
+  @@map("conversations")
+}
+
+model Message {
+  id             String        @id @default(cuid())
+  conversationId String
+  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  waMessageId    String?       @unique
+  direction      Direction
+  type           MessageType   @default(TEXT)
+  body           String
+  status         MessageStatus @default(SENT)
+  timestamp      DateTime
+  createdAt      DateTime      @default(now())
+
+  @@map("messages")
+}
+
+enum Direction {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  AUDIO
+  VIDEO
+  DOCUMENT
+  TEMPLATE
+}
+
+enum MessageStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
