@@ -22,10 +22,26 @@ import { WebhookService, IMessageEmitter } from '../whatsapp/webhook.service';
  *   - tenant:<tenantId>  — all connected agents of a tenant receive broadcast events
  *   - conversation:<id>  — joined on demand via 'join-conversation' event
  */
+function getWsOrigins(): (string | RegExp)[] {
+  const base = process.env.FRONTEND_URL || 'http://localhost:3000';
+  try {
+    const url = new URL(base);
+    const origins: (string | RegExp)[] = [base];
+    if (url.hostname.startsWith('www.')) {
+      origins.push(`${url.protocol}//${url.hostname.slice(4)}${url.port ? ':' + url.port : ''}`);
+    } else {
+      origins.push(`${url.protocol}//www.${url.hostname}${url.port ? ':' + url.port : ''}`);
+    }
+    return origins;
+  } catch {
+    return [base];
+  }
+}
+
 @WebSocketGateway({
   namespace: '/chat',
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: getWsOrigins(),
     credentials: true,
   },
 })
