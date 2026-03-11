@@ -219,7 +219,6 @@ export class WhatsAppService {
         tenantId,
         contactId: contact.id,
         phoneNumberId,
-        wabaId: account.wabaId,
         lastMessageAt: new Date(),
       },
     });
