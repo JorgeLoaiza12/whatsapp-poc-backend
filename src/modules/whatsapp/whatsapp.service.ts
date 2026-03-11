@@ -250,7 +250,8 @@ export class WhatsAppService {
 
     this.logger.log(`Found ${wabaIds.length} WABA(s): ${wabaIds.join(', ')}`);
 
-    // Step 4 – Fetch phone numbers for the first WABA
+    // Step 4 – Fetch phone numbers across all WABAs, skip Meta's test number
+    const META_TEST_NUMBER = '15551898039';
     let phonesRaw: any[] = [];
     let wabaId = wabaIds[0];
 
@@ -262,9 +263,13 @@ export class WhatsAppService {
             access_token: longLivedToken,
           },
         });
-        if (data.data?.length) {
-          phonesRaw = data.data;
+        const real = (data.data ?? []).filter(
+          (p: any) => p.display_phone_number?.replace(/\D/g, '') !== META_TEST_NUMBER,
+        );
+        if (real.length) {
+          phonesRaw = real;
           wabaId = id;
+          this.logger.log(`Using WABA ${id} with phone ${real[0].display_phone_number}`);
           break;
         }
       } catch (err) {
@@ -274,7 +279,7 @@ export class WhatsAppService {
 
     if (!phonesRaw.length) {
       throw new BadRequestException(
-        'No phone numbers found in the WhatsApp Business account.',
+        'No real phone numbers found. Only the Meta test number was detected.',
       );
     }
 
