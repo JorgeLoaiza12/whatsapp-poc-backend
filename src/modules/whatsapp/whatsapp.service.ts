@@ -171,6 +171,92 @@ export class WhatsAppService {
     return this.prisma.whatsAppAccount.findUnique({ where: { phoneNumberId } });
   }
 
+  // ─── Auto-connect from FB.login() token (no BSP/TP required) ──────────────
+
+  /**
+   * Receives the short-lived token from FB.login(), exchanges it for a
+   * long-lived token, then auto-discovers the WABA and phone number via
+   * the Graph API — no wabaId/phoneNumberId required from the client.
+   */
+  async connectFromToken(tenantId: string, accessToken: string) {
+    const appId = this.config.getOrThrow<string>('META_APP_ID');
+    const appSecret = this.config.getOrThrow<string>('META_APP_SECRET');
+    const appToken = `${appId}|${appSecret}`;
+
+    // Step 1 – Verify token
+    const { data: debugResp } = await axios.get(`${GRAPH_URL}/debug_token`, {
+      params: { input_token: accessToken, access_token: appToken },
+    });
+    if (!debugResp.data?.is_valid) {
+      throw new BadRequestException('Invalid or expired Meta access token');
+    }
+
+    // Step 2 – Exchange for long-lived token
+    const { data: tokenResp } = await axios.get(
+      `${GRAPH_URL}/oauth/access_token`,
+      {
+        params: {
+          grant_type: 'fb_exchange_token',
+          client_id: appId,
+          client_secret: appSecret,
+          fb_exchange_token: accessToken,
+        },
+      },
+    );
+    const longLivedToken: string = tokenResp.access_token;
+
+    // Step 3 – Auto-discover WABA + phone number
+    const { data: bizData } = await axios.get(`${GRAPH_URL}/me/businesses`, {
+      params: {
+        fields:
+          'whatsapp_business_accounts{id,name,phone_numbers{id,display_phone_number,verified_name}}',
+        access_token: longLivedToken,
+      },
+    });
+
+    const wabas: any[] =
+      bizData.data?.[0]?.whatsapp_business_accounts?.data ?? [];
+    if (!wabas.length) {
+      throw new BadRequestException(
+        'No WhatsApp Business accounts found for this Meta user. ' +
+          'Make sure you have a WABA set up in Meta Business Manager.',
+      );
+    }
+
+    const waba = wabas[0];
+    const phones: any[] = waba.phone_numbers?.data ?? [];
+    if (!phones.length) {
+      throw new BadRequestException(
+        'No phone numbers found in the WhatsApp Business account.',
+      );
+    }
+    const phone = phones[0];
+
+    // Step 4 – Persist
+    const account = await this.prisma.whatsAppAccount.upsert({
+      where: { phoneNumberId: phone.id },
+      update: {
+        accessToken: longLivedToken,
+        wabaId: waba.id,
+        displayName: phone.verified_name ?? null,
+        isActive: true,
+      },
+      create: {
+        tenantId,
+        wabaId: waba.id,
+        phoneNumberId: phone.id,
+        phoneNumber: phone.display_phone_number,
+        accessToken: longLivedToken,
+        displayName: phone.verified_name ?? null,
+      },
+    });
+
+    this.logger.log(
+      `Tenant ${tenantId} auto-connected phone ${account.phoneNumber}`,
+    );
+    return account;
+  }
+
   // ─── Redirect-based Embedded Signup ────────────────────────────────────────
 
   /**

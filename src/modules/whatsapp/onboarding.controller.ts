@@ -1,4 +1,10 @@
-import { Controller, Post, Get, Body, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Body, UseGuards, BadRequestException } from '@nestjs/common';
+import { IsString } from 'class-validator';
+
+class ConnectTokenDto {
+  @IsString()
+  accessToken: string;
+}
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUser } from '../../common/decorators/current-user.decorator';
@@ -19,6 +25,17 @@ export class OnboardingController {
   @Post('connect')
   connect(@CurrentUser() user: AuthUser, @Body() dto: ConnectAccountDto) {
     return this.whatsappService.connectAccount(user.tenantId, dto);
+  }
+
+  /**
+   * POST /api/whatsapp/connect-auto
+   * Receives the short-lived token from FB.login() (no embedded signup extras),
+   * auto-discovers the WABA and phone number from the Graph API.
+   * Works without BSP/TP status.
+   */
+  @Post('connect-auto')
+  connectAuto(@CurrentUser() user: AuthUser, @Body() dto: ConnectTokenDto) {
+    return this.whatsappService.connectFromToken(user.tenantId, dto.accessToken);
   }
 
   /**
