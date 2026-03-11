@@ -47,6 +47,9 @@ export class WebhookService {
 
     if (!phoneNumberId || !from) return;
 
+    // Normalize: strip leading '+' to match how startConversation stores numbers
+    const normalizedFrom = from.startsWith('+') ? from.slice(1) : from;
+
     // 1. Resolve tenant
     const account = await this.prisma.whatsAppAccount.findUnique({
       where: { phoneNumberId },
@@ -59,9 +62,9 @@ export class WebhookService {
 
     // 2. Upsert contact
     const contact = await this.prisma.contact.upsert({
-      where: { tenantId_waPhone: { tenantId, waPhone: from } },
+      where: { tenantId_waPhone: { tenantId, waPhone: normalizedFrom } },
       update: {},
-      create: { tenantId, waPhone: from },
+      create: { tenantId, waPhone: normalizedFrom },
     });
 
     // 3. Upsert conversation
@@ -102,9 +105,12 @@ export class WebhookService {
     });
 
     // 6. Real-time push to tenant room
+    this.logger.log(
+      `New inbound message: from=${normalizedFrom} conv=${conversation.id} msg=${waMessageId}`,
+    );
     this.emitter?.emitNewMessage(tenantId, {
       ...message,
-      contact: { id: contact.id, waPhone: from, name: contact.name },
+      contact: { id: contact.id, waPhone: normalizedFrom, name: contact.name },
       conversationId: conversation.id,
     });
   }

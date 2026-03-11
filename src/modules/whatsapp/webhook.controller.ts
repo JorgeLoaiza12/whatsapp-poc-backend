@@ -7,6 +7,7 @@ import {
   Res,
   HttpCode,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Response } from 'express';
@@ -19,6 +20,8 @@ import { WebhookService } from './webhook.service';
  */
 @Controller('webhook')
 export class WebhookController {
+  private readonly logger = new Logger(WebhookController.name);
+
   constructor(
     private readonly webhookService: WebhookService,
     private readonly config: ConfigService,
@@ -50,8 +53,11 @@ export class WebhookController {
   @Post()
   @HttpCode(HttpStatus.OK)
   async receive(@Body() body: unknown) {
+    this.logger.log(`Webhook received: ${JSON.stringify(body).slice(0, 300)}`);
     // Fire-and-forget — Meta retries if we don't respond 200 quickly
-    this.webhookService.processPayload(body).catch(() => null);
+    this.webhookService
+      .processPayload(body)
+      .catch((err) => this.logger.error(`processPayload error: ${err?.message ?? err}`));
     return { status: 'ok' };
   }
 }
