@@ -210,6 +210,12 @@ export class WhatsAppService {
       throw new BadRequestException('Invalid or expired Meta access token');
     }
 
+    this.logger.log(
+      `debug_token scopes=${JSON.stringify(debugData.data?.scopes)} ` +
+      `granular=${JSON.stringify(debugData.data?.granular_scopes)} ` +
+      `userId=${debugData.data?.user_id}`,
+    );
+
     // Step 2 – Exchange for long-lived token
     let longLivedToken: string;
     try {
