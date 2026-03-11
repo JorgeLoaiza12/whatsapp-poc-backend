@@ -7,14 +7,22 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─── Auth & Multi-tenancy ─────────────────────────────────────────────────────
+
 model Tenant {
   id               String            @id @default(cuid())
   name             String
   slug             String            @unique
+  loyaltyCardName  String            @default("Lash Studio")
   users            User[]
   whatsappAccounts WhatsAppAccount[]
   conversations    Conversation[]
   contacts         Contact[]
+  services         Service[]
+  incomes          Income[]
+  expenses         Expense[]
+  reminderDismissals ReminderDismissal[]
+  tenantCurrencies TenantCurrency[]
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
@@ -34,6 +42,8 @@ model User {
   @@map("users")
 }
 
+// ─── WhatsApp ─────────────────────────────────────────────────────────────────
+
 model WhatsAppAccount {
   id            String   @id @default(cuid())
   tenantId      String
@@ -50,19 +60,43 @@ model WhatsAppAccount {
   @@map("whatsapp_accounts")
 }
 
+// ─── Contact / Client (unified) ───────────────────────────────────────────────
+// This model represents both a WhatsApp contact (waPhone) and a CRM client.
+// All CRM fields are optional so existing WhatsApp-only contacts are unaffected.
+
 model Contact {
-  id            String         @id @default(cuid())
-  tenantId      String
-  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  waPhone       String
-  name          String?
-  conversations Conversation[]
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // WhatsApp identifier (existing)
+  waPhone    String
+
+  // CRM client fields (from agencl — all optional for safe migration)
+  name       String?
+  phone      String?   // general phone, may differ from waPhone
+  email      String?
+  instagram  String?
+  notes      String?
+
+  // Loyalty program (from agencl)
+  loyaltyStamps       Int     @default(0)
+  googleWalletPassId  String?
+  appleWalletPassId   String?
+  applePassUrl        String?
+
+  conversations      Conversation[]
+  incomes            Income[]
+  reminderDismissals ReminderDismissal[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([tenantId, waPhone])
   @@map("contacts")
 }
+
+// ─── WhatsApp Conversations ───────────────────────────────────────────────────
 
 model Conversation {
   id            String    @id @default(cuid())
@@ -72,7 +106,7 @@ model Conversation {
   contact       Contact   @relation(fields: [contactId], references: [id])
   phoneNumberId String
   lastMessageAt DateTime?
-  lastReadAt    DateTime? // when the agent last opened this conversation
+  lastReadAt    DateTime?
   messages      Message[]
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -95,6 +129,93 @@ model Message {
 
   @@map("messages")
 }
+
+// ─── CRM: Services ────────────────────────────────────────────────────────────
+
+model Service {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name               String
+  price              Decimal  @db.Decimal(10, 2)
+  duration           Int?     // minutes
+  description        String?
+  isActive           Boolean  @default(true)
+  daysForNextTouchup Int?     // days until client needs follow-up reminder
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("services")
+}
+
+// ─── CRM: Income ──────────────────────────────────────────────────────────────
+
+model Income {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contactId     String
+  contact       Contact  @relation(fields: [contactId], references: [id])
+  serviceNames  String   // comma-separated list of service names
+  amount        Decimal  @db.Decimal(10, 2)
+  currency      String   @default("CLP") // CLP | USD | VES
+  paymentMethod String   // Efectivo | Transferencia | Tarjeta
+  notes         String?
+  date          DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("incomes")
+}
+
+// ─── CRM: Expense ─────────────────────────────────────────────────────────────
+
+model Expense {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  amount        Decimal  @db.Decimal(10, 2)
+  currency      String   @default("CLP")
+  category      String
+  description   String
+  paymentMethod String
+  notes         String?
+  date          DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("expenses")
+}
+
+// ─── CRM: Reminder Dismissals ─────────────────────────────────────────────────
+
+model ReminderDismissal {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contactId   String
+  contact     Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  serviceName String
+  dismissedAt DateTime @default(now())
+
+  @@map("reminder_dismissals")
+}
+
+// ─── CRM: Multi-currency ──────────────────────────────────────────────────────
+
+model TenantCurrency {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  currency  String   // CLP | USD | VES
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, currency])
+  @@map("tenant_currencies")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
 
 enum Direction {
   INBOUND
