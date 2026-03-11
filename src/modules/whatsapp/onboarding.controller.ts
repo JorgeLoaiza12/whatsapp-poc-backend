@@ -80,4 +80,13 @@ export class OnboardingController {
   getAccounts(@CurrentUser() user: AuthUser) {
     return this.whatsappService.getAccountsForTenant(user.tenantId);
   }
+
+  /**
+   * POST /api/whatsapp/subscribe-webhooks
+   * Re-subscribes all linked WABAs to Meta webhooks (idempotent, safe to call anytime).
+   */
+  @Post('subscribe-webhooks')
+  subscribeWebhooks(@CurrentUser() user: AuthUser) {
+    return this.whatsappService.subscribeAllWabasForTenant(user.tenantId);
+  }
 }

@@ -77,6 +77,9 @@ export class WhatsAppService {
       },
     );
 
+    // Step 3b – Subscribe WABA to webhooks
+    await this.subscribeWaba(dto.wabaId, longLivedToken);
+
     // Step 4 – Persist
     const account = await this.prisma.whatsAppAccount.upsert({
       where: { phoneNumberId: dto.phoneNumberId },
@@ -100,6 +103,17 @@ export class WhatsAppService {
       `Tenant ${tenantId} connected phone ${account.phoneNumber}`,
     );
     return account;
+  }
+
+  /** Re-subscribes all active WABAs for a tenant to webhook events */
+  async subscribeAllWabasForTenant(tenantId: string) {
+    const accounts = await this.prisma.whatsAppAccount.findMany({
+      where: { tenantId, isActive: true },
+    });
+    for (const acc of accounts) {
+      await this.subscribeWaba(acc.wabaId, acc.accessToken);
+    }
+    return { subscribed: accounts.length };
   }
 
   async getAccountsForTenant(tenantId: string) {
@@ -376,6 +390,20 @@ export class WhatsAppService {
    * Connects a specific phone number chosen by the user.
    * Expects the long-lived token returned by list-phones.
    */
+  /** Subscribes the app to receive webhook events from a WABA */
+  private async subscribeWaba(wabaId: string, accessToken: string): Promise<void> {
+    try {
+      await axios.post(
+        `${GRAPH_URL}/${wabaId}/subscribed_apps`,
+        {},
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+      );
+      this.logger.log(`WABA ${wabaId} subscribed to webhooks`);
+    } catch (err) {
+      this.logger.warn(`Failed to subscribe WABA ${wabaId} to webhooks: ${metaErrMsg(err)}`);
+    }
+  }
+
   async connectFromToken(
     tenantId: string,
     longLivedToken: string,
@@ -392,6 +420,9 @@ export class WhatsAppService {
     } catch (err) {
       throw new BadRequestException(`Failed to fetch phone details: ${metaErrMsg(err)}`);
     }
+
+    // Subscribe WABA to webhooks so Meta sends events to our endpoint
+    await this.subscribeWaba(wabaId, longLivedToken);
 
     const account = await this.prisma.whatsAppAccount.upsert({
       where: { phoneNumberId: phone.id },
