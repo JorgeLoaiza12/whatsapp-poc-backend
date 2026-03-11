@@ -205,32 +205,40 @@ export class WhatsAppService {
     );
     const longLivedToken: string = tokenResp.access_token;
 
-    // Step 3 – Auto-discover WABA + phone number
-    const { data: bizData } = await axios.get(`${GRAPH_URL}/me/businesses`, {
-      params: {
-        fields:
-          'whatsapp_business_accounts{id,name,phone_numbers{id,display_phone_number,verified_name}}',
-        access_token: longLivedToken,
-      },
-    });
+    // Step 3 – Extract WABA ID from debug_token granular_scopes
+    // debug_token returns: granular_scopes[{ scope: 'whatsapp_business_management', target_ids: ['<WABA_ID>'] }]
+    const granularScopes: any[] = debugResp.data?.granular_scopes ?? [];
+    const wabaScope = granularScopes.find(
+      (s: any) => s.scope === 'whatsapp_business_management',
+    );
+    const wabaId: string | undefined = wabaScope?.target_ids?.[0];
 
-    const wabas: any[] =
-      bizData.data?.[0]?.whatsapp_business_accounts?.data ?? [];
-    if (!wabas.length) {
+    if (!wabaId) {
       throw new BadRequestException(
-        'No WhatsApp Business accounts found for this Meta user. ' +
-          'Make sure you have a WABA set up in Meta Business Manager.',
+        'No WhatsApp Business account found in token permissions. ' +
+          'Make sure you granted WhatsApp Business Management access.',
       );
     }
 
-    const waba = wabas[0];
-    const phones: any[] = waba.phone_numbers?.data ?? [];
+    // Step 4 – Get phone numbers for this WABA
+    const { data: phoneData } = await axios.get(
+      `https://graph.facebook.com/v21.0/${wabaId}/phone_numbers`,
+      {
+        params: {
+          fields: 'id,display_phone_number,verified_name',
+          access_token: longLivedToken,
+        },
+      },
+    );
+
+    const phones: any[] = phoneData.data ?? [];
     if (!phones.length) {
       throw new BadRequestException(
         'No phone numbers found in the WhatsApp Business account.',
       );
     }
     const phone = phones[0];
+    const waba = { id: wabaId };
 
     // Step 4 – Persist
     const account = await this.prisma.whatsAppAccount.upsert({
