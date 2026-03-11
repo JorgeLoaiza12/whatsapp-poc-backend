@@ -1,9 +1,20 @@
-import { Controller, Post, Get, Body, UseGuards, BadRequestException } from '@nestjs/common';
+import { Controller, Post, Get, Body, UseGuards } from '@nestjs/common';
 import { IsString } from 'class-validator';
+
+class ListPhonesDto {
+  @IsString()
+  accessToken: string;
+}
 
 class ConnectTokenDto {
   @IsString()
-  accessToken: string;
+  longLivedToken: string;
+
+  @IsString()
+  wabaId: string;
+
+  @IsString()
+  phoneNumberId: string;
 }
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -28,14 +39,26 @@ export class OnboardingController {
   }
 
   /**
+   * POST /api/whatsapp/list-phones
+   * Returns all real phone numbers available for the FB user to choose from.
+   */
+  @Post('list-phones')
+  listPhones(@Body() dto: ListPhonesDto) {
+    return this.whatsappService.listPhones(dto.accessToken);
+  }
+
+  /**
    * POST /api/whatsapp/connect-auto
-   * Receives the short-lived token from FB.login() (no embedded signup extras),
-   * auto-discovers the WABA and phone number from the Graph API.
-   * Works without BSP/TP status.
+   * Connects the phone number chosen by the user.
    */
   @Post('connect-auto')
   connectAuto(@CurrentUser() user: AuthUser, @Body() dto: ConnectTokenDto) {
-    return this.whatsappService.connectFromToken(user.tenantId, dto.accessToken);
+    return this.whatsappService.connectFromToken(
+      user.tenantId,
+      dto.longLivedToken,
+      dto.wabaId,
+      dto.phoneNumberId,
+    );
   }
 
   /**

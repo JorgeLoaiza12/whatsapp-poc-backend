@@ -183,17 +183,14 @@ export class WhatsAppService {
 
   // ─── Auto-connect from FB.login() token (no BSP/TP required) ──────────────
 
-  /**
-   * Receives the short-lived token from FB.login(), exchanges it for a
-   * long-lived token, then auto-discovers the WABA and phone number via
-   * the Graph API — no wabaId/phoneNumberId required from the client.
-   */
-  async connectFromToken(tenantId: string, accessToken: string) {
+  private readonly META_TEST_NUMBER = '15551898039';
+
+  /** Verifies token, exchanges for long-lived, returns token + WABA IDs */
+  private async resolveToken(accessToken: string) {
     const appId = this.config.getOrThrow<string>('META_APP_ID');
     const appSecret = this.config.getOrThrow<string>('META_APP_SECRET');
     const appToken = `${appId}|${appSecret}`;
 
-    // Step 1 – Verify token
     let debugData: any;
     try {
       const { data } = await axios.get(`${GRAPH_URL}/debug_token`, {
@@ -210,13 +207,17 @@ export class WhatsAppService {
       throw new BadRequestException('Invalid or expired Meta access token');
     }
 
-    this.logger.log(
-      `debug_token scopes=${JSON.stringify(debugData.data?.scopes)} ` +
-      `granular=${JSON.stringify(debugData.data?.granular_scopes)} ` +
-      `userId=${debugData.data?.user_id}`,
-    );
+    const granularScopes: any[] = debugData.data?.granular_scopes ?? [];
+    const wabaIds: string[] =
+      granularScopes.find((s: any) => s.scope === 'whatsapp_business_management')
+        ?.target_ids ?? [];
 
-    // Step 2 – Exchange for long-lived token
+    if (!wabaIds.length) {
+      throw new BadRequestException(
+        'No WhatsApp Business account found. Make sure you granted WhatsApp Business Management access.',
+      );
+    }
+
     let longLivedToken: string;
     try {
       const { data } = await axios.get(`${GRAPH_URL}/oauth/access_token`, {
@@ -234,58 +235,79 @@ export class WhatsAppService {
       throw new BadRequestException(`Token exchange failed: ${msg}`);
     }
 
-    // Step 3 – Extract WABA IDs directly from granular_scopes (no extra API call needed)
-    const granularScopes: any[] = debugData.data?.granular_scopes ?? [];
-    const wabaScope = granularScopes.find(
-      (s: any) => s.scope === 'whatsapp_business_management',
-    );
-    const wabaIds: string[] = wabaScope?.target_ids ?? [];
+    return { longLivedToken, wabaIds };
+  }
 
-    if (!wabaIds.length) {
-      throw new BadRequestException(
-        'No WhatsApp Business account found in token permissions. ' +
-          'Make sure you granted WhatsApp Business Management access.',
-      );
-    }
-
-    this.logger.log(`Found ${wabaIds.length} WABA(s): ${wabaIds.join(', ')}`);
-
-    // Step 4 – Fetch phone numbers across all WABAs, skip Meta's test number
-    const META_TEST_NUMBER = '15551898039';
-    let phonesRaw: any[] = [];
-    let wabaId = wabaIds[0];
+  /** Fetches all real phone numbers (excluding Meta test number) across WABAs */
+  private async fetchPhoneOptions(
+    wabaIds: string[],
+    token: string,
+  ): Promise<{ wabaId: string; phoneNumberId: string; phoneNumber: string; displayName: string }[]> {
+    const results: { wabaId: string; phoneNumberId: string; phoneNumber: string; displayName: string }[] = [];
 
     for (const id of wabaIds) {
       try {
         const { data } = await axios.get(`${GRAPH_URL}/${id}/phone_numbers`, {
-          params: {
-            fields: 'id,display_phone_number,verified_name',
-            access_token: longLivedToken,
-          },
+          params: { fields: 'id,display_phone_number,verified_name', access_token: token },
         });
-        const real = (data.data ?? []).filter(
-          (p: any) => p.display_phone_number?.replace(/\D/g, '') !== META_TEST_NUMBER,
-        );
-        if (real.length) {
-          phonesRaw = real;
-          wabaId = id;
-          this.logger.log(`Using WABA ${id} with phone ${real[0].display_phone_number}`);
-          break;
+        for (const p of data.data ?? []) {
+          if (p.display_phone_number?.replace(/\D/g, '') === this.META_TEST_NUMBER) continue;
+          results.push({
+            wabaId: id,
+            phoneNumberId: p.id,
+            phoneNumber: p.display_phone_number,
+            displayName: p.verified_name ?? '',
+          });
         }
       } catch (err) {
         this.logger.warn(`/${id}/phone_numbers: ${metaErrMsg(err)}`);
       }
     }
 
-    if (!phonesRaw.length) {
+    return results;
+  }
+
+  /**
+   * Returns all available (real) phone numbers for the user to choose from.
+   * Called before connect-auto so the user can select the desired number.
+   */
+  async listPhones(accessToken: string) {
+    const { longLivedToken, wabaIds } = await this.resolveToken(accessToken);
+    const phones = await this.fetchPhoneOptions(wabaIds, longLivedToken);
+
+    if (!phones.length) {
       throw new BadRequestException(
         'No real phone numbers found. Only the Meta test number was detected.',
       );
     }
 
-    const phone = phonesRaw[0];
+    // Return token encrypted is not safe — return a short-lived session reference instead.
+    // For simplicity in this POC we return the long-lived token so the client can pass it
+    // back in connect-auto (it never goes to the browser localStorage in this flow).
+    return { phones, longLivedToken };
+  }
 
-    // Step 4 – Persist
+  /**
+   * Connects a specific phone number chosen by the user.
+   * Expects the long-lived token returned by list-phones.
+   */
+  async connectFromToken(
+    tenantId: string,
+    longLivedToken: string,
+    wabaId: string,
+    phoneNumberId: string,
+  ) {
+    // Fetch phone details
+    let phone: any;
+    try {
+      const { data } = await axios.get(`${GRAPH_URL}/${phoneNumberId}`, {
+        params: { fields: 'id,display_phone_number,verified_name', access_token: longLivedToken },
+      });
+      phone = data;
+    } catch (err) {
+      throw new BadRequestException(`Failed to fetch phone details: ${metaErrMsg(err)}`);
+    }
+
     const account = await this.prisma.whatsAppAccount.upsert({
       where: { phoneNumberId: phone.id },
       update: {
@@ -304,9 +326,7 @@ export class WhatsAppService {
       },
     });
 
-    this.logger.log(
-      `Tenant ${tenantId} auto-connected phone ${account.phoneNumber}`,
-    );
+    this.logger.log(`Tenant ${tenantId} connected phone ${account.phoneNumber}`);
     return account;
   }
 
