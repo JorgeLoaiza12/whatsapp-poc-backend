@@ -4,6 +4,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUser } from '../../common/decorators/current-user.decorator';
 import { WhatsAppService } from './whatsapp.service';
 import { SendMessageDto } from './dto/send-message.dto';
+import { StartConversationDto } from './dto/start-conversation.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('messages')
@@ -23,6 +24,20 @@ export class MessagesController {
       dto.to,
       dto.body,
       dto.conversationId,
+    );
+  }
+
+  /**
+   * POST /api/messages/start
+   * Creates or reuses a conversation with a new contact and sends the first message.
+   */
+  @Post('start')
+  start(@CurrentUser() user: AuthUser, @Body() dto: StartConversationDto) {
+    return this.whatsappService.startConversation(
+      user.tenantId,
+      dto.phoneNumberId,
+      dto.to,
+      dto.body,
     );
   }
 }

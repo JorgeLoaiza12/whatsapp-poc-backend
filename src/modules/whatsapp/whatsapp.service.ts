@@ -181,6 +181,89 @@ export class WhatsAppService {
     return this.prisma.whatsAppAccount.findUnique({ where: { phoneNumberId } });
   }
 
+  /**
+   * Creates a new outbound conversation to a contact that hasn't messaged before.
+   * Upserts Contact + Conversation, sends the first message via Meta, persists it.
+   */
+  async startConversation(
+    tenantId: string,
+    phoneNumberId: string,
+    to: string,
+    body: string,
+  ) {
+    const account = await this.prisma.whatsAppAccount.findFirst({
+      where: { phoneNumberId, tenantId, isActive: true },
+    });
+    if (!account) {
+      throw new NotFoundException('No active WhatsApp account found for this phone number');
+    }
+
+    // Upsert contact
+    const contact = await this.prisma.contact.upsert({
+      where: { tenantId_waPhone: { tenantId, waPhone: to } },
+      update: {},
+      create: { tenantId, waPhone: to },
+    });
+
+    // Upsert conversation
+    const conversation = await this.prisma.conversation.upsert({
+      where: {
+        tenantId_contactId_phoneNumberId: {
+          tenantId,
+          contactId: contact.id,
+          phoneNumberId,
+        },
+      },
+      update: {},
+      create: {
+        tenantId,
+        contactId: contact.id,
+        phoneNumberId,
+        wabaId: account.wabaId,
+        lastMessageAt: new Date(),
+      },
+    });
+
+    // Send via Meta
+    const { data: metaResp } = await axios.post(
+      `${GRAPH_URL}/${phoneNumberId}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to,
+        type: 'text',
+        text: { body },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${account.accessToken}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    const waMessageId: string | undefined = metaResp.messages?.[0]?.id;
+
+    const message = await this.prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        waMessageId,
+        direction: Direction.OUTBOUND,
+        type: MessageType.TEXT,
+        body,
+        status: MessageStatus.SENT,
+        timestamp: new Date(),
+      },
+    });
+
+    await this.prisma.conversation.update({
+      where: { id: conversation.id },
+      data: { lastMessageAt: new Date() },
+    });
+
+    this.logger.log(`Tenant ${tenantId} started conversation with ${to}`);
+    return { conversation: { ...conversation, contact }, message };
+  }
+
   // ─── Auto-connect from FB.login() token (no BSP/TP required) ──────────────
 
   private readonly META_TEST_NUMBER = '15551898039';
