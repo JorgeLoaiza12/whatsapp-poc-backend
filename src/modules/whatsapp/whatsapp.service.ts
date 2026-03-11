@@ -170,4 +170,87 @@ export class WhatsAppService {
   async getAccountByPhoneNumberId(phoneNumberId: string) {
     return this.prisma.whatsAppAccount.findUnique({ where: { phoneNumberId } });
   }
+
+  // ─── Redirect-based Embedded Signup ────────────────────────────────────────
+
+  /**
+   * Called from the /onboarding/callback page after Meta redirects with ?code=.
+   * 1. Exchanges the code for a business integration system user token (no popup needed).
+   * 2. Lists the customer's WABA accounts via Graph API.
+   * 3. Persists the first WABA + phone number for this tenant.
+   */
+  async connectViaCode(tenantId: string, code: string, redirectUri: string) {
+    const appId = this.config.getOrThrow<string>('META_APP_ID');
+    const appSecret = this.config.getOrThrow<string>('META_APP_SECRET');
+
+    // Step 1 – Exchange code → business token
+    const { data: tokenData } = await axios.get(
+      'https://graph.facebook.com/v21.0/oauth/access_token',
+      {
+        params: {
+          client_id: appId,
+          client_secret: appSecret,
+          redirect_uri: redirectUri,
+          code,
+        },
+      },
+    );
+    const businessToken: string = tokenData.access_token;
+    if (!businessToken) {
+      throw new BadRequestException('Meta did not return a business token');
+    }
+
+    // Step 2 – List WABA accounts with phone numbers
+    const { data: bizData } = await axios.get(
+      'https://graph.facebook.com/v21.0/me/businesses',
+      {
+        params: {
+          fields:
+            'whatsapp_business_accounts{id,name,phone_numbers{id,display_phone_number,verified_name}}',
+          access_token: businessToken,
+        },
+      },
+    );
+
+    const wabas: any[] =
+      bizData.data?.[0]?.whatsapp_business_accounts?.data ?? [];
+    if (!wabas.length) {
+      throw new BadRequestException(
+        'No WhatsApp Business accounts found for this Meta user',
+      );
+    }
+
+    const waba = wabas[0];
+    const phones: any[] = waba.phone_numbers?.data ?? [];
+    if (!phones.length) {
+      throw new BadRequestException(
+        'No phone numbers found in the WhatsApp Business account',
+      );
+    }
+    const phone = phones[0];
+
+    // Step 3 – Upsert account
+    const account = await this.prisma.whatsAppAccount.upsert({
+      where: { phoneNumberId: phone.id },
+      update: {
+        accessToken: businessToken,
+        wabaId: waba.id,
+        displayName: phone.verified_name ?? null,
+        isActive: true,
+      },
+      create: {
+        tenantId,
+        wabaId: waba.id,
+        phoneNumberId: phone.id,
+        phoneNumber: phone.display_phone_number,
+        accessToken: businessToken,
+        displayName: phone.verified_name ?? null,
+      },
+    });
+
+    this.logger.log(
+      `Tenant ${tenantId} connected via redirect — phone ${account.phoneNumber}`,
+    );
+    return account;
+  }
 }

@@ -4,6 +4,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUser } from '../../common/decorators/current-user.decorator';
 import { WhatsAppService } from './whatsapp.service';
 import { ConnectAccountDto } from './dto/connect-account.dto';
+import { ConnectCodeDto } from './dto/connect-code.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('whatsapp')
@@ -18,6 +19,20 @@ export class OnboardingController {
   @Post('connect')
   connect(@CurrentUser() user: AuthUser, @Body() dto: ConnectAccountDto) {
     return this.whatsappService.connectAccount(user.tenantId, dto);
+  }
+
+  /**
+   * POST /api/whatsapp/connect-code
+   * Redirect-based Embedded Signup: receives the OAuth code from the frontend
+   * callback page, exchanges it for a business token, and links the account.
+   */
+  @Post('connect-code')
+  connectViaCode(@CurrentUser() user: AuthUser, @Body() dto: ConnectCodeDto) {
+    return this.whatsappService.connectViaCode(
+      user.tenantId,
+      dto.code,
+      dto.redirectUri,
+    );
   }
 
   /** GET /api/whatsapp/accounts — list linked accounts for the current tenant */
