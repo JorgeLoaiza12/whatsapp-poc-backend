@@ -5,6 +5,7 @@ import { PrismaService } from '../../database/prisma.service';
 /** Minimal interface so WebhookService can emit without importing ChatGateway directly (avoids circular dep) */
 export interface IMessageEmitter {
   emitNewMessage(tenantId: string, payload: unknown): void;
+  emitMessageStatus(tenantId: string, waMessageId: string, status: string): void;
 }
 
 @Injectable()
@@ -27,6 +28,13 @@ export class WebhookService {
   async processPayload(body: unknown): Promise<void> {
     const payload = body as any;
     const value = payload?.entry?.[0]?.changes?.[0]?.value;
+
+    if (!value) return;
+
+    // Handle status updates (DELIVERED, READ, FAILED)
+    if (value.statuses?.length) {
+      await this.processStatuses(value.statuses, value.metadata?.phone_number_id);
+    }
 
     if (!value?.messages?.length) return;
 
@@ -99,5 +107,32 @@ export class WebhookService {
       contact: { id: contact.id, waPhone: from, name: contact.name },
       conversationId: conversation.id,
     });
+  }
+
+  private async processStatuses(statuses: any[], phoneNumberId: string): Promise<void> {
+    for (const s of statuses) {
+      const waMessageId: string = s.id;
+      const rawStatus: string = s.status; // sent | delivered | read | failed
+      const status = rawStatus.toUpperCase(); // match MessageStatus enum
+
+      // Update DB
+      try {
+        await this.prisma.message.update({
+          where: { waMessageId },
+          data: { status: status as any },
+        });
+      } catch {
+        // Message might not exist yet (e.g. race condition) — ignore
+        return;
+      }
+
+      // Find tenant for this phone number to emit to the right room
+      const account = await this.prisma.whatsAppAccount.findUnique({
+        where: { phoneNumberId },
+      });
+      if (!account) return;
+
+      this.emitter?.emitMessageStatus(account.tenantId, waMessageId, status);
+    }
   }
 }

@@ -198,11 +198,14 @@ export class WhatsAppService {
       throw new NotFoundException('No active WhatsApp account found for this phone number');
     }
 
+    // Normalize phone: Meta webhooks send numbers without leading '+', so strip it for consistency
+    const normalizedTo = to.startsWith('+') ? to.slice(1) : to;
+
     // Upsert contact
     const contact = await this.prisma.contact.upsert({
-      where: { tenantId_waPhone: { tenantId, waPhone: to } },
+      where: { tenantId_waPhone: { tenantId, waPhone: normalizedTo } },
       update: {},
-      create: { tenantId, waPhone: to },
+      create: { tenantId, waPhone: normalizedTo },
     });
 
     // Upsert conversation
@@ -228,7 +231,7 @@ export class WhatsAppService {
       `${GRAPH_URL}/${phoneNumberId}/messages`,
       {
         messaging_product: 'whatsapp',
-        to,
+        to: normalizedTo,
         type: 'text',
         text: { body },
       },
