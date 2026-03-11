@@ -10,7 +10,17 @@ import { Direction, MessageStatus, MessageType } from '@prisma/client';
 import { PrismaService } from '../../database/prisma.service';
 import { ConnectAccountDto } from './dto/connect-account.dto';
 
-const GRAPH_URL = 'https://graph.facebook.com/v19.0';
+const GRAPH_URL = 'https://graph.facebook.com/v21.0';
+
+/** Extracts a readable message from an Axios error response */
+function metaErrMsg(err: any): string {
+  return (
+    err?.response?.data?.error?.message ??
+    err?.response?.data?.message ??
+    err?.message ??
+    'Unknown Meta API error'
+  );
+}
 
 @Injectable()
 export class WhatsAppService {
@@ -184,86 +194,124 @@ export class WhatsAppService {
     const appToken = `${appId}|${appSecret}`;
 
     // Step 1 – Verify token
-    const { data: debugResp } = await axios.get(`${GRAPH_URL}/debug_token`, {
-      params: { input_token: accessToken, access_token: appToken },
-    });
-    if (!debugResp.data?.is_valid) {
+    let debugData: any;
+    try {
+      const { data } = await axios.get(`${GRAPH_URL}/debug_token`, {
+        params: { input_token: accessToken, access_token: appToken },
+      });
+      debugData = data;
+    } catch (err) {
+      const msg = metaErrMsg(err);
+      this.logger.error(`debug_token failed: ${msg}`);
+      throw new BadRequestException(`Token verification failed: ${msg}`);
+    }
+
+    if (!debugData.data?.is_valid) {
       throw new BadRequestException('Invalid or expired Meta access token');
     }
 
     // Step 2 – Exchange for long-lived token
-    const { data: tokenResp } = await axios.get(
-      `${GRAPH_URL}/oauth/access_token`,
-      {
+    let longLivedToken: string;
+    try {
+      const { data } = await axios.get(`${GRAPH_URL}/oauth/access_token`, {
         params: {
           grant_type: 'fb_exchange_token',
           client_id: appId,
           client_secret: appSecret,
           fb_exchange_token: accessToken,
         },
-      },
-    );
-    const longLivedToken: string = tokenResp.access_token;
+      });
+      longLivedToken = data.access_token;
+    } catch (err) {
+      const msg = metaErrMsg(err);
+      this.logger.error(`Token exchange failed: ${msg}`);
+      throw new BadRequestException(`Token exchange failed: ${msg}`);
+    }
 
-    // Step 3 – Discover WABA via /me/businesses (requires business_management scope)
-    // Falls back to /me/whatsapp_business_accounts if no Business Manager is set up
+    // Step 3a – Try /me/businesses (requires business_management scope)
     let wabaId: string | undefined;
     let phonesRaw: any[] = [];
 
     try {
-      const { data: bizData } = await axios.get(
-        `https://graph.facebook.com/v21.0/me/businesses`,
-        {
-          params: {
-            fields:
-              'whatsapp_business_accounts{id,phone_numbers{id,display_phone_number,verified_name}}',
-            access_token: longLivedToken,
-          },
+      const { data } = await axios.get(`${GRAPH_URL}/me/businesses`, {
+        params: {
+          fields:
+            'whatsapp_business_accounts{id,phone_numbers{id,display_phone_number,verified_name}}',
+          access_token: longLivedToken,
         },
-      );
-      const firstBiz = bizData.data?.[0];
-      const firstWaba = firstBiz?.whatsapp_business_accounts?.data?.[0];
+      });
+      const firstWaba = data.data?.[0]?.whatsapp_business_accounts?.data?.[0];
       wabaId = firstWaba?.id;
       phonesRaw = firstWaba?.phone_numbers?.data ?? [];
-    } catch {
-      // business_management not granted or no Business Manager — try direct WABA endpoint
+      this.logger.debug(`/me/businesses → wabaId=${wabaId}`);
+    } catch (err) {
+      this.logger.warn(`/me/businesses: ${metaErrMsg(err)}`);
     }
 
-    // Fallback: query /me/whatsapp_business_accounts directly
+    // Step 3b – Fallback: /{userId}/whatsapp_business_accounts
     if (!wabaId) {
-      const { data: directData } = await axios.get(
-        `https://graph.facebook.com/v21.0/me/whatsapp_business_accounts`,
-        {
-          params: {
-            fields: 'id,phone_numbers{id,display_phone_number,verified_name}',
-            access_token: longLivedToken,
+      const userId: string = debugData.data?.user_id;
+      if (userId) {
+        try {
+          const { data } = await axios.get(
+            `${GRAPH_URL}/${userId}/whatsapp_business_accounts`,
+            {
+              params: {
+                fields: 'id,name',
+                access_token: longLivedToken,
+              },
+            },
+          );
+          wabaId = data.data?.[0]?.id;
+          this.logger.debug(`/${userId}/whatsapp_business_accounts → wabaId=${wabaId}`);
+        } catch (err) {
+          this.logger.warn(`/userId/whatsapp_business_accounts: ${metaErrMsg(err)}`);
+        }
+      }
+    }
+
+    // Step 3c – Fallback: /me/whatsapp_business_accounts
+    if (!wabaId) {
+      try {
+        const { data } = await axios.get(
+          `${GRAPH_URL}/me/whatsapp_business_accounts`,
+          {
+            params: {
+              fields: 'id,name',
+              access_token: longLivedToken,
+            },
           },
-        },
-      );
-      const firstWaba = directData.data?.[0];
-      wabaId = firstWaba?.id;
-      phonesRaw = firstWaba?.phone_numbers?.data ?? [];
+        );
+        wabaId = data.data?.[0]?.id;
+        this.logger.debug(`/me/whatsapp_business_accounts → wabaId=${wabaId}`);
+      } catch (err) {
+        this.logger.warn(`/me/whatsapp_business_accounts: ${metaErrMsg(err)}`);
+      }
     }
 
     if (!wabaId) {
       throw new BadRequestException(
         'No WhatsApp Business account found. ' +
-          'Make sure your Facebook account is linked to a WhatsApp Business Account.',
+          'Grant all requested permissions and make sure your Facebook account ' +
+          'is linked to a WhatsApp Business Account in Meta Business Manager.',
       );
     }
 
-    // If phones still empty, fetch them directly
+    // Step 3c – Fetch phone numbers directly if not yet loaded
     if (!phonesRaw.length) {
-      const { data: phoneData } = await axios.get(
-        `https://graph.facebook.com/v21.0/${wabaId}/phone_numbers`,
-        {
+      try {
+        const { data } = await axios.get(`${GRAPH_URL}/${wabaId}/phone_numbers`, {
           params: {
             fields: 'id,display_phone_number,verified_name',
             access_token: longLivedToken,
           },
-        },
-      );
-      phonesRaw = phoneData.data ?? [];
+        });
+        phonesRaw = data.data ?? [];
+      } catch (err) {
+        const msg = metaErrMsg(err);
+        this.logger.error(`phone_numbers fetch failed: ${msg}`);
+        throw new BadRequestException(`Failed to fetch phone numbers: ${msg}`);
+      }
     }
 
     if (!phonesRaw.length) {
@@ -273,20 +321,19 @@ export class WhatsAppService {
     }
 
     const phone = phonesRaw[0];
-    const waba = { id: wabaId };
 
     // Step 4 – Persist
     const account = await this.prisma.whatsAppAccount.upsert({
       where: { phoneNumberId: phone.id },
       update: {
         accessToken: longLivedToken,
-        wabaId: waba.id,
+        wabaId,
         displayName: phone.verified_name ?? null,
         isActive: true,
       },
       create: {
         tenantId,
-        wabaId: waba.id,
+        wabaId,
         phoneNumberId: phone.id,
         phoneNumber: phone.display_phone_number,
         accessToken: longLivedToken,
