@@ -105,6 +105,62 @@ export class WhatsAppService {
     return account;
   }
 
+  /**
+   * Merges duplicate contacts created with leading '+' into the canonical (no-'+') version.
+   * Moves all messages to the canonical conversation and removes the duplicates.
+   */
+  async fixDuplicateContacts(tenantId: string) {
+    const plusContacts = await this.prisma.contact.findMany({
+      where: { tenantId, waPhone: { startsWith: '+' } },
+      include: { conversations: { include: { messages: true } } },
+    });
+
+    let merged = 0;
+    for (const plusContact of plusContacts) {
+      const normalized = plusContact.waPhone.slice(1);
+      const canonical = await this.prisma.contact.findUnique({
+        where: { tenantId_waPhone: { tenantId, waPhone: normalized } },
+        include: { conversations: true },
+      });
+      if (!canonical) continue;
+
+      for (const oldConv of plusContact.conversations) {
+        // Find the canonical conversation for same phoneNumberId
+        const canonicalConv = canonical.conversations.find(
+          (c) => c.phoneNumberId === oldConv.phoneNumberId,
+        );
+        if (!canonicalConv) continue;
+
+        // Move messages to canonical conversation
+        await this.prisma.message.updateMany({
+          where: { conversationId: oldConv.id },
+          data: { conversationId: canonicalConv.id },
+        });
+
+        // Update lastMessageAt on canonical conversation
+        const latest = await this.prisma.message.findFirst({
+          where: { conversationId: canonicalConv.id },
+          orderBy: { timestamp: 'desc' },
+        });
+        if (latest) {
+          await this.prisma.conversation.update({
+            where: { id: canonicalConv.id },
+            data: { lastMessageAt: latest.timestamp },
+          });
+        }
+
+        // Delete old conversation
+        await this.prisma.conversation.delete({ where: { id: oldConv.id } });
+        merged++;
+      }
+
+      // Delete old '+' contact
+      await this.prisma.contact.delete({ where: { id: plusContact.id } });
+    }
+
+    return { merged };
+  }
+
   /** Re-subscribes all active WABAs for a tenant to webhook events */
   async subscribeAllWabasForTenant(tenantId: string) {
     const accounts = await this.prisma.whatsAppAccount.findMany({

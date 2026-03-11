@@ -89,4 +89,9 @@ export class OnboardingController {
   subscribeWebhooks(@CurrentUser() user: AuthUser) {
     return this.whatsappService.subscribeAllWabasForTenant(user.tenantId);
   }
+
+  @Post('fix-contacts')
+  fixContacts(@CurrentUser() user: AuthUser) {
+    return this.whatsappService.fixDuplicateContacts(user.tenantId);
+  }
 }
