@@ -205,39 +205,74 @@ export class WhatsAppService {
     );
     const longLivedToken: string = tokenResp.access_token;
 
-    // Step 3 – Extract WABA ID from debug_token granular_scopes
-    // debug_token returns: granular_scopes[{ scope: 'whatsapp_business_management', target_ids: ['<WABA_ID>'] }]
-    const granularScopes: any[] = debugResp.data?.granular_scopes ?? [];
-    const wabaScope = granularScopes.find(
-      (s: any) => s.scope === 'whatsapp_business_management',
-    );
-    const wabaId: string | undefined = wabaScope?.target_ids?.[0];
+    // Step 3 – Discover WABA via /me/businesses (requires business_management scope)
+    // Falls back to /me/whatsapp_business_accounts if no Business Manager is set up
+    let wabaId: string | undefined;
+    let phonesRaw: any[] = [];
+
+    try {
+      const { data: bizData } = await axios.get(
+        `https://graph.facebook.com/v21.0/me/businesses`,
+        {
+          params: {
+            fields:
+              'whatsapp_business_accounts{id,phone_numbers{id,display_phone_number,verified_name}}',
+            access_token: longLivedToken,
+          },
+        },
+      );
+      const firstBiz = bizData.data?.[0];
+      const firstWaba = firstBiz?.whatsapp_business_accounts?.data?.[0];
+      wabaId = firstWaba?.id;
+      phonesRaw = firstWaba?.phone_numbers?.data ?? [];
+    } catch {
+      // business_management not granted or no Business Manager — try direct WABA endpoint
+    }
+
+    // Fallback: query /me/whatsapp_business_accounts directly
+    if (!wabaId) {
+      const { data: directData } = await axios.get(
+        `https://graph.facebook.com/v21.0/me/whatsapp_business_accounts`,
+        {
+          params: {
+            fields: 'id,phone_numbers{id,display_phone_number,verified_name}',
+            access_token: longLivedToken,
+          },
+        },
+      );
+      const firstWaba = directData.data?.[0];
+      wabaId = firstWaba?.id;
+      phonesRaw = firstWaba?.phone_numbers?.data ?? [];
+    }
 
     if (!wabaId) {
       throw new BadRequestException(
-        'No WhatsApp Business account found in token permissions. ' +
-          'Make sure you granted WhatsApp Business Management access.',
+        'No WhatsApp Business account found. ' +
+          'Make sure your Facebook account is linked to a WhatsApp Business Account.',
       );
     }
 
-    // Step 4 – Get phone numbers for this WABA
-    const { data: phoneData } = await axios.get(
-      `https://graph.facebook.com/v21.0/${wabaId}/phone_numbers`,
-      {
-        params: {
-          fields: 'id,display_phone_number,verified_name',
-          access_token: longLivedToken,
+    // If phones still empty, fetch them directly
+    if (!phonesRaw.length) {
+      const { data: phoneData } = await axios.get(
+        `https://graph.facebook.com/v21.0/${wabaId}/phone_numbers`,
+        {
+          params: {
+            fields: 'id,display_phone_number,verified_name',
+            access_token: longLivedToken,
+          },
         },
-      },
-    );
+      );
+      phonesRaw = phoneData.data ?? [];
+    }
 
-    const phones: any[] = phoneData.data ?? [];
-    if (!phones.length) {
+    if (!phonesRaw.length) {
       throw new BadRequestException(
         'No phone numbers found in the WhatsApp Business account.',
       );
     }
-    const phone = phones[0];
+
+    const phone = phonesRaw[0];
     const waba = { id: wabaId };
 
     // Step 4 – Persist
