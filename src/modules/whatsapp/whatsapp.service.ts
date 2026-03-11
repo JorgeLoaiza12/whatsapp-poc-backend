@@ -234,89 +234,41 @@ export class WhatsAppService {
       throw new BadRequestException(`Token exchange failed: ${msg}`);
     }
 
-    // Step 3a – Try /me/businesses (requires business_management scope)
-    let wabaId: string | undefined;
-    let phonesRaw: any[] = [];
+    // Step 3 – Extract WABA IDs directly from granular_scopes (no extra API call needed)
+    const granularScopes: any[] = debugData.data?.granular_scopes ?? [];
+    const wabaScope = granularScopes.find(
+      (s: any) => s.scope === 'whatsapp_business_management',
+    );
+    const wabaIds: string[] = wabaScope?.target_ids ?? [];
 
-    try {
-      const { data } = await axios.get(`${GRAPH_URL}/me/businesses`, {
-        params: {
-          fields:
-            'whatsapp_business_accounts{id,phone_numbers{id,display_phone_number,verified_name}}',
-          access_token: longLivedToken,
-        },
-      });
-      const firstWaba = data.data?.[0]?.whatsapp_business_accounts?.data?.[0];
-      wabaId = firstWaba?.id;
-      phonesRaw = firstWaba?.phone_numbers?.data ?? [];
-      this.logger.debug(`/me/businesses → wabaId=${wabaId}`);
-    } catch (err) {
-      this.logger.warn(`/me/businesses: ${metaErrMsg(err)}`);
-    }
-
-    // Step 3b – Fallback: /{userId}/whatsapp_business_accounts
-    if (!wabaId) {
-      const userId: string = debugData.data?.user_id;
-      if (userId) {
-        try {
-          const { data } = await axios.get(
-            `${GRAPH_URL}/${userId}/whatsapp_business_accounts`,
-            {
-              params: {
-                fields: 'id,name',
-                access_token: longLivedToken,
-              },
-            },
-          );
-          wabaId = data.data?.[0]?.id;
-          this.logger.debug(`/${userId}/whatsapp_business_accounts → wabaId=${wabaId}`);
-        } catch (err) {
-          this.logger.warn(`/userId/whatsapp_business_accounts: ${metaErrMsg(err)}`);
-        }
-      }
-    }
-
-    // Step 3c – Fallback: /me/whatsapp_business_accounts
-    if (!wabaId) {
-      try {
-        const { data } = await axios.get(
-          `${GRAPH_URL}/me/whatsapp_business_accounts`,
-          {
-            params: {
-              fields: 'id,name',
-              access_token: longLivedToken,
-            },
-          },
-        );
-        wabaId = data.data?.[0]?.id;
-        this.logger.debug(`/me/whatsapp_business_accounts → wabaId=${wabaId}`);
-      } catch (err) {
-        this.logger.warn(`/me/whatsapp_business_accounts: ${metaErrMsg(err)}`);
-      }
-    }
-
-    if (!wabaId) {
+    if (!wabaIds.length) {
       throw new BadRequestException(
-        'No WhatsApp Business account found. ' +
-          'Grant all requested permissions and make sure your Facebook account ' +
-          'is linked to a WhatsApp Business Account in Meta Business Manager.',
+        'No WhatsApp Business account found in token permissions. ' +
+          'Make sure you granted WhatsApp Business Management access.',
       );
     }
 
-    // Step 3c – Fetch phone numbers directly if not yet loaded
-    if (!phonesRaw.length) {
+    this.logger.log(`Found ${wabaIds.length} WABA(s): ${wabaIds.join(', ')}`);
+
+    // Step 4 – Fetch phone numbers for the first WABA
+    let phonesRaw: any[] = [];
+    let wabaId = wabaIds[0];
+
+    for (const id of wabaIds) {
       try {
-        const { data } = await axios.get(`${GRAPH_URL}/${wabaId}/phone_numbers`, {
+        const { data } = await axios.get(`${GRAPH_URL}/${id}/phone_numbers`, {
           params: {
             fields: 'id,display_phone_number,verified_name',
             access_token: longLivedToken,
           },
         });
-        phonesRaw = data.data ?? [];
+        if (data.data?.length) {
+          phonesRaw = data.data;
+          wabaId = id;
+          break;
+        }
       } catch (err) {
-        const msg = metaErrMsg(err);
-        this.logger.error(`phone_numbers fetch failed: ${msg}`);
-        throw new BadRequestException(`Failed to fetch phone numbers: ${msg}`);
+        this.logger.warn(`/${id}/phone_numbers: ${metaErrMsg(err)}`);
       }
     }
 
