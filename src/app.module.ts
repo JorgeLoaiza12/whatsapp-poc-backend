@@ -5,6 +5,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { CrmModule } from './modules/crm/crm.module';
+import { AppController } from './app.controller';
 
 @Module({
   imports: [
@@ -15,5 +16,6 @@ import { CrmModule } from './modules/crm/crm.module';
     ChatModule,
     CrmModule,
   ],
+  controllers: [AppController],
 })
 export class AppModule {}
