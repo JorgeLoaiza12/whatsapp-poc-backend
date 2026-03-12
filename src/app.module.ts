@@ -4,6 +4,7 @@ import { PrismaModule } from './database/prisma.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
 import { ChatModule } from './modules/chat/chat.module';
+import { CrmModule } from './modules/crm/crm.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { ChatModule } from './modules/chat/chat.module';
     AuthModule,
     WhatsAppModule,
     ChatModule,
+    CrmModule,
   ],
 })
 export class AppModule {}
