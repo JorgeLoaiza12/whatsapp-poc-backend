@@ -2,24 +2,5 @@
   "$schema": "https://schema.railpack.com",
   "packages": {
     "node": "20"
-  },
-  "steps": {
-    "build": {
-      "commands": [
-        { "type": "copy", "paths": ["."] },
-        { "type": "exec", "command": "npm ci" },
-        { "type": "exec", "command": "npx prisma generate" },
-        { "type": "exec", "command": "npm run build" }
-      ]
-    }
-  },
-  "deploy": {
-    "inputs": [
-      {
-        "step": "build",
-        "include": ["dist", "node_modules", "prisma"]
-      }
-    ],
-    "startCommand": "node dist/main"
   }
 }
