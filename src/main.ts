@@ -48,6 +48,11 @@ class AllExceptionsFilter implements ExceptionFilter {
 }
 
 function getAllowedOrigins(): (string | RegExp)[] {
+  // Support a comma-separated ALLOWED_ORIGINS list (takes priority)
+  if (process.env.ALLOWED_ORIGINS) {
+    return process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean);
+  }
+
   const base = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
   // Accept both www and non-www variants automatically
   try {

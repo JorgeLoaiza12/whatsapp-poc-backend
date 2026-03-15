@@ -37,7 +37,7 @@ const fakeIncome = {
   currency: 'CLP',
   paymentMethod: 'Transferencia',
   date: new Date('2025-01-15'),
-  notes: null,
+  notes: undefined,
   contact: fakeContact,
 };
 
@@ -118,7 +118,7 @@ describe('IncomesService', () => {
       currency: 'CLP',
       paymentMethod: 'Efectivo',
       date: '2025-01-15',
-      notes: null,
+      notes: undefined,
     };
 
     it('creates income and increments loyalty stamp in a transaction', async () => {

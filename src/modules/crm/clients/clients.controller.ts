@@ -10,7 +10,9 @@ import {
   UseGuards,
   ParseIntPipe,
   DefaultValuePipe,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import type { AuthUser } from '../../../common/decorators/current-user.decorator';
@@ -21,6 +23,14 @@ import { UpsertClientDto } from './dto/upsert-client.dto';
 @Controller('crm/clients')
 export class ClientsController {
   constructor(private readonly clientsService: ClientsService) {}
+
+  @Get('export')
+  async exportCsv(@CurrentUser() user: AuthUser, @Res() res: Response) {
+    const csv = await this.clientsService.exportCsv(user.tenantId);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="clients.csv"');
+    res.send(csv);
+  }
 
   @Get()
   findAll(@CurrentUser() user: AuthUser, @Query('search') search?: string) {

@@ -7,6 +7,7 @@ interface JwtPayload {
   sub: string;
   email: string;
   tenantId: string;
+  role?: string;
 }
 
 @Injectable()
@@ -22,9 +23,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   validate(payload: JwtPayload) {
     // Return value is attached to request.user by Passport
     return {
+      id: payload.sub,
       userId: payload.sub,
       email: payload.email,
       tenantId: payload.tenantId,
+      role: payload.role ?? 'OWNER',
     };
   }
 }

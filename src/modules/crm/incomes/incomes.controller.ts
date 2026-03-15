@@ -8,7 +8,9 @@ import {
   Body,
   Query,
   UseGuards,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import type { AuthUser } from '../../../common/decorators/current-user.decorator';
@@ -19,6 +21,14 @@ import { UpsertIncomeDto } from './dto/upsert-income.dto';
 @Controller('crm/incomes')
 export class IncomesController {
   constructor(private readonly incomesService: IncomesService) {}
+
+  @Get('export')
+  async exportCsv(@CurrentUser() user: AuthUser, @Res() res: Response) {
+    const csv = await this.incomesService.exportCsv(user.tenantId);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="incomes.csv"');
+    res.send(csv);
+  }
 
   @Get()
   findAll(@CurrentUser() user: AuthUser, @Query('search') search?: string) {

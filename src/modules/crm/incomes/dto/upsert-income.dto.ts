@@ -38,4 +38,8 @@ export class UpsertIncomeDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  userId?: string;
 }

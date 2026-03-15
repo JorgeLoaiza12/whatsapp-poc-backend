@@ -66,6 +66,7 @@ export class ClientsService {
         instagram: dto.instagram,
         notes: dto.notes,
         loyaltyStamps: dto.loyaltyStamps ?? 0,
+        birthDate: dto.birthDate ? new Date(dto.birthDate) : undefined,
       },
     });
   }
@@ -97,6 +98,7 @@ export class ClientsService {
         instagram: dto.instagram,
         notes: dto.notes,
         loyaltyStamps: dto.loyaltyStamps,
+        birthDate: dto.birthDate ? new Date(dto.birthDate) : undefined,
       },
     });
   }
@@ -105,6 +107,32 @@ export class ClientsService {
     await this.findOne(tenantId, id);
     await this.prisma.contact.delete({ where: { id } });
     return { ok: true };
+  }
+
+  async exportCsv(tenantId: string): Promise<string> {
+    const contacts = await this.prisma.contact.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+    });
+    const rows = contacts.map(c => ({
+      name: c.name ?? '',
+      waPhone: c.waPhone,
+      phone: c.phone ?? '',
+      email: c.email ?? '',
+      instagram: c.instagram ?? '',
+      loyaltyStamps: c.loyaltyStamps,
+      totalVisits: c.totalVisits,
+      totalSpent: String(c.totalSpent),
+      lastVisitAt: c.lastVisitAt?.toISOString() ?? '',
+      createdAt: c.createdAt.toISOString(),
+    }));
+    return new Promise((resolve, reject) => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { stringify } = require('csv-stringify');
+      stringify(rows, { header: true }, (err: any, output: string) => {
+        if (err) reject(err); else resolve(output);
+      });
+    });
   }
 
   async adjustStamp(tenantId: string, id: string, delta: number) {

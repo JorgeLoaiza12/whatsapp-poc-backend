@@ -61,6 +61,37 @@ export class ChatService {
     return messages;
   }
 
+  /** Searches messages by body text and conversations by contact name */
+  async search(tenantId: string, q: string) {
+    if (!q || q.trim().length < 2) return [];
+    const term = q.trim();
+    const messages = await this.prisma.message.findMany({
+      where: {
+        conversation: { tenantId },
+        body: { contains: term, mode: 'insensitive' },
+      },
+      include: {
+        conversation: {
+          include: { contact: { select: { id: true, name: true, waPhone: true } } },
+        },
+      },
+      orderBy: { timestamp: 'desc' },
+      take: 50,
+    });
+    // Also search by contact name
+    const byContact = await this.prisma.conversation.findMany({
+      where: {
+        tenantId,
+        contact: { name: { contains: term, mode: 'insensitive' } },
+      },
+      include: {
+        contact: { select: { id: true, name: true, waPhone: true } },
+        messages: { orderBy: { timestamp: 'desc' }, take: 1 },
+      },
+    });
+    return { messages, conversations: byContact };
+  }
+
   /** Explicitly marks a conversation as read (called by frontend on open) */
   async markAsRead(tenantId: string, conversationId: string) {
     const conversation = await this.prisma.conversation.findFirst({

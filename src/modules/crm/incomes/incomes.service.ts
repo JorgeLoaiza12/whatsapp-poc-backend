@@ -46,6 +46,7 @@ export class IncomesService {
         data: {
           tenantId,
           contactId: dto.contactId,
+          userId: dto.userId ?? null,
           serviceNames: dto.serviceNames,
           amount: dto.amount,
           currency: dto.currency,
@@ -55,14 +56,37 @@ export class IncomesService {
         },
         include: { contact: true },
       }),
-      // Increment loyalty stamp (capped at 10)
+      // Increment loyalty stamp (capped at 10) and update visit stats
       this.prisma.contact.update({
         where: { id: dto.contactId },
         data: {
           loyaltyStamps: Math.min(10, contact.loyaltyStamps + 1),
+          lastVisitAt: new Date(dto.date),
+          totalVisits: { increment: 1 },
+          totalSpent: { increment: dto.amount },
         },
       }),
     ]);
+
+    // Auto-create commission if agent has a rule
+    if (dto.userId) {
+      const rule = await this.prisma.commissionRule.findUnique({
+        where: { tenantId_userId: { tenantId, userId: dto.userId } },
+      });
+      if (rule) {
+        const commissionAmount = (dto.amount * Number(rule.percentage)) / 100;
+        await this.prisma.commission.create({
+          data: {
+            tenantId,
+            userId: dto.userId,
+            incomeId: income.id,
+            amount: commissionAmount,
+            percentage: rule.percentage,
+            status: 'PENDING',
+          },
+        });
+      }
+    }
 
     return income;
   }
@@ -94,5 +118,29 @@ export class IncomesService {
     await this.findOne(tenantId, id);
     await this.prisma.income.delete({ where: { id } });
     return { ok: true };
+  }
+
+  async exportCsv(tenantId: string): Promise<string> {
+    const incomes = await this.prisma.income.findMany({
+      where: { tenantId },
+      include: { contact: { select: { name: true, waPhone: true } } },
+      orderBy: { date: 'desc' },
+    });
+    const rows = incomes.map(i => ({
+      date: i.date.toISOString().split('T')[0],
+      clientName: i.contact.name ?? i.contact.waPhone,
+      serviceNames: i.serviceNames,
+      amount: String(i.amount),
+      currency: i.currency,
+      paymentMethod: i.paymentMethod,
+      notes: i.notes ?? '',
+    }));
+    return new Promise((resolve, reject) => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { stringify } = require('csv-stringify');
+      stringify(rows, { header: true }, (err: any, output: string) => {
+        if (err) reject(err); else resolve(output);
+      });
+    });
   }
 }

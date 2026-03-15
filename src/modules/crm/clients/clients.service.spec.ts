@@ -111,7 +111,7 @@ describe('ClientsService', () => {
       phone: '56912345678',
       email: 'ana@test.com',
       instagram: '@ana',
-      notes: null,
+      notes: undefined,
       loyaltyStamps: 0,
     };
 

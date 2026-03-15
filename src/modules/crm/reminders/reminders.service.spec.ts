@@ -14,6 +14,10 @@ const mockPrisma = {
     deleteMany: jest.fn(),
   },
   income: { findMany: jest.fn() },
+  tenant: {
+    findUnique: jest.fn(),
+    update: jest.fn(),
+  },
 };
 
 const thirtyDaysAgo = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
@@ -197,6 +201,54 @@ describe('RemindersService', () => {
         where: { tenantId: TENANT_ID, contactId: 'contact-1', serviceName: 'Diseño de cejas' },
       });
       expect(result).toEqual({ ok: true });
+    });
+  });
+
+  // ── getConfig ────────────────────────────────────────────────────────────
+
+  describe('getConfig', () => {
+    it('returns reminderEnabled true when tenant has it enabled', async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue({ reminderEnabled: true });
+
+      const result = await service.getConfig(TENANT_ID);
+
+      expect(mockPrisma.tenant.findUnique).toHaveBeenCalledWith({
+        where: { id: TENANT_ID },
+        select: { reminderEnabled: true },
+      });
+      expect(result).toEqual({ reminderEnabled: true });
+    });
+
+    it('defaults to true when tenant is not found', async () => {
+      mockPrisma.tenant.findUnique.mockResolvedValue(null);
+
+      const result = await service.getConfig(TENANT_ID);
+
+      expect(result).toEqual({ reminderEnabled: true });
+    });
+  });
+
+  // ── updateConfig ──────────────────────────────────────────────────────────
+
+  describe('updateConfig', () => {
+    it('updates tenant reminderEnabled and returns the new value', async () => {
+      mockPrisma.tenant.update.mockResolvedValue({ id: TENANT_ID, reminderEnabled: false });
+
+      const result = await service.updateConfig(TENANT_ID, false);
+
+      expect(mockPrisma.tenant.update).toHaveBeenCalledWith({
+        where: { id: TENANT_ID },
+        data: { reminderEnabled: false },
+      });
+      expect(result).toEqual({ reminderEnabled: false });
+    });
+
+    it('can re-enable reminders', async () => {
+      mockPrisma.tenant.update.mockResolvedValue({ id: TENANT_ID, reminderEnabled: true });
+
+      const result = await service.updateConfig(TENANT_ID, true);
+
+      expect(result).toEqual({ reminderEnabled: true });
     });
   });
 });

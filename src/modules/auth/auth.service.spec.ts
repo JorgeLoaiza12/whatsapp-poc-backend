@@ -1,5 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  UnauthorizedException,
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth.service';
@@ -8,6 +14,10 @@ import { PrismaService } from '../../database/prisma.service';
 const mockPrisma = {
   user: {
     findUnique: jest.fn(),
+    findFirst: jest.fn(),
+    findMany: jest.fn(),
+    create: jest.fn(),
+    delete: jest.fn(),
   },
   tenant: {
     create: jest.fn(),
@@ -96,6 +106,7 @@ describe('AuthService', () => {
         sub: 'user-1',
         email: dto.email,
         tenantId: 'tenant-1',
+        role: expect.any(String),
       });
     });
 
@@ -114,6 +125,107 @@ describe('AuthService', () => {
       });
 
       await expect(service.login(dto)).rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  // ── inviteAgent ──────────────────────────────────────────────────────────
+
+  describe('inviteAgent', () => {
+    const agentData = { email: 'agent@test.com', name: 'Agent Bob', password: 'Secret123' };
+
+    it('creates an AGENT user and returns safe fields', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue(null);
+      const created = {
+        id: 'user-agent-1',
+        email: agentData.email,
+        name: agentData.name,
+        role: 'AGENT',
+        createdAt: new Date(),
+      };
+      mockPrisma.user.create.mockResolvedValue(created);
+
+      const result = await service.inviteAgent('tenant-1', agentData.email, agentData.name, agentData.password);
+
+      expect(mockPrisma.user.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            email: agentData.email,
+            name: agentData.name,
+            tenantId: 'tenant-1',
+            role: 'AGENT',
+          }),
+          select: { id: true, email: true, name: true, role: true, createdAt: true },
+        }),
+      );
+      expect(result).toEqual(created);
+    });
+
+    it('throws ConflictException when email is already registered', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ id: 'existing-user' });
+
+      await expect(
+        service.inviteAgent('tenant-1', agentData.email, agentData.name, agentData.password),
+      ).rejects.toThrow(ConflictException);
+      expect(mockPrisma.user.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── getTeam ──────────────────────────────────────────────────────────────
+
+  describe('getTeam', () => {
+    it('returns all users for the tenant ordered by createdAt asc', async () => {
+      const teamMembers = [
+        { id: 'user-1', email: 'owner@test.com', name: 'Owner', role: 'OWNER', createdAt: new Date('2024-01-01') },
+        { id: 'user-2', email: 'agent@test.com', name: 'Agent', role: 'AGENT', createdAt: new Date('2024-02-01') },
+      ];
+      mockPrisma.user.findMany.mockResolvedValue(teamMembers);
+
+      const result = await service.getTeam('tenant-1');
+
+      expect(mockPrisma.user.findMany).toHaveBeenCalledWith({
+        where: { tenantId: 'tenant-1' },
+        select: { id: true, email: true, name: true, role: true, createdAt: true },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(result).toEqual(teamMembers);
+    });
+  });
+
+  // ── removeTeamMember ─────────────────────────────────────────────────────
+
+  describe('removeTeamMember', () => {
+    it('throws BadRequestException when trying to remove yourself', async () => {
+      await expect(
+        service.removeTeamMember('tenant-1', 'user-1', 'user-1'),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockPrisma.user.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when user does not belong to tenant', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.removeTeamMember('tenant-1', 'user-other', 'user-1'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws ForbiddenException when trying to remove an OWNER', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({ id: 'user-2', role: 'OWNER', tenantId: 'tenant-1' });
+
+      await expect(
+        service.removeTeamMember('tenant-1', 'user-2', 'user-1'),
+      ).rejects.toThrow(ForbiddenException);
+      expect(mockPrisma.user.delete).not.toHaveBeenCalled();
+    });
+
+    it('deletes AGENT user and returns { ok: true }', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({ id: 'user-2', role: 'AGENT', tenantId: 'tenant-1' });
+      mockPrisma.user.delete.mockResolvedValue({ id: 'user-2' });
+
+      const result = await service.removeTeamMember('tenant-1', 'user-2', 'user-1');
+
+      expect(mockPrisma.user.delete).toHaveBeenCalledWith({ where: { id: 'user-2' } });
+      expect(result).toEqual({ ok: true });
     });
   });
 });

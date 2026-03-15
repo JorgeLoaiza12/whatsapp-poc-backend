@@ -14,6 +14,8 @@ model Tenant {
   name             String
   slug             String            @unique
   loyaltyCardName  String            @default("Lash Studio")
+  reminderEnabled  Boolean           @default(true)
+  timezone         String            @default("America/Santiago")
   users            User[]
   whatsappAccounts WhatsAppAccount[]
   conversations    Conversation[]
@@ -22,11 +24,25 @@ model Tenant {
   incomes          Income[]
   expenses         Expense[]
   reminderDismissals ReminderDismissal[]
-  tenantCurrencies TenantCurrency[]
+  reminderLogs       ReminderLog[]
+  waTemplates        WaTemplate[]
+  campaigns          Campaign[]
+  tenantCurrencies   TenantCurrency[]
+  appointments       Appointment[]
+  quickReplies       QuickReply[]
+  clinicalProfiles   ClinicalProfile[]
+  clinicalEntries    ClinicalEntry[]
+  commissionRules    CommissionRule[]
+  commissions        Commission[]
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
   @@map("tenants")
+}
+
+enum UserRole {
+  OWNER
+  AGENT
 }
 
 model User {
@@ -35,7 +51,11 @@ model User {
   password  String
   name      String
   tenantId  String
+  role      UserRole @default(OWNER)
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  incomes         Income[]
+  commissionRules CommissionRule[]
+  commissions     Commission[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -85,9 +105,19 @@ model Contact {
   appleWalletPassId   String?
   applePassUrl        String?
 
+  // Enriched profile (Feature F)
+  birthDate    DateTime?
+  lastVisitAt  DateTime?
+  totalVisits  Int         @default(0)
+  totalSpent   Decimal     @default(0) @db.Decimal(10, 2)
+
   conversations      Conversation[]
   incomes            Income[]
   reminderDismissals ReminderDismissal[]
+  reminderLogs       ReminderLog[]
+  campaignRecipients CampaignRecipient[]
+  appointments       Appointment[]
+  clinicalProfile    ClinicalProfile?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -156,12 +186,15 @@ model Income {
   tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   contactId     String
   contact       Contact  @relation(fields: [contactId], references: [id])
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id])
   serviceNames  String   // comma-separated list of service names
   amount        Decimal  @db.Decimal(10, 2)
   currency      String   @default("CLP") // CLP | USD | VES
   paymentMethod String   // Efectivo | Transferencia | Tarjeta
   notes         String?
   date          DateTime
+  commission    Commission?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -185,6 +218,82 @@ model Expense {
   updatedAt     DateTime @updatedAt
 
   @@map("expenses")
+}
+
+// ─── CRM: Reminder Logs (auto-sent reminders) ────────────────────────────────
+
+model ReminderLog {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contactId   String
+  contact     Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  serviceName String
+  sentAt      DateTime @default(now())
+  waMessageId String?
+  status      String   // "SENT" | "FAILED"
+  errorMsg    String?
+
+  @@map("reminder_logs")
+}
+
+// ─── WhatsApp Templates ───────────────────────────────────────────────────────
+
+model WaTemplate {
+  id         String           @id @default(cuid())
+  tenantId   String
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  wabaId     String
+  name       String
+  language   String           @default("es")
+  category   TemplateCategory
+  status     TemplateStatus   @default(PENDING)
+  components Json
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  campaigns  Campaign[]
+
+  @@unique([tenantId, name, language])
+  @@map("wa_templates")
+}
+
+// ─── Campaigns ────────────────────────────────────────────────────────────────
+
+model Campaign {
+  id           String           @id @default(cuid())
+  tenantId     String
+  tenant       Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name         String
+  message      String?
+  templateId   String?
+  template     WaTemplate?      @relation(fields: [templateId], references: [id])
+  segment      String?
+  status       CampaignStatus   @default(DRAFT)
+  scheduledAt  DateTime?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  sentCount    Int              @default(0)
+  failedCount  Int              @default(0)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  recipients   CampaignRecipient[]
+
+  @@map("campaigns")
+}
+
+model CampaignRecipient {
+  id           String          @id @default(cuid())
+  campaignId   String
+  campaign     Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId    String
+  contact      Contact         @relation(fields: [contactId], references: [id])
+  status       RecipientStatus @default(PENDING)
+  sentAt       DateTime?
+  waMessageId  String?
+  errorMessage String?
+
+  @@unique([campaignId, contactId])
+  @@map("campaign_recipients")
 }
 
 // ─── CRM: Reminder Dismissals ─────────────────────────────────────────────────
@@ -222,6 +331,34 @@ enum Direction {
   OUTBOUND
 }
 
+enum TemplateCategory {
+  MARKETING
+  UTILITY
+  AUTHENTICATION
+}
+
+enum TemplateStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  DISABLED
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  SENDING
+  COMPLETED
+  FAILED
+}
+
+enum RecipientStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
 enum MessageType {
   TEXT
   IMAGE
@@ -236,4 +373,126 @@ enum MessageStatus {
   DELIVERED
   READ
   FAILED
+}
+
+// ─── Appointments (Feature E) ─────────────────────────────────────────────────
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+model Appointment {
+  id           String            @id @default(cuid())
+  tenantId     String
+  tenant       Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contactId    String
+  contact      Contact           @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  serviceName  String
+  scheduledAt  DateTime
+  durationMins Int               @default(60)
+  notes        String?
+  status       AppointmentStatus @default(SCHEDULED)
+  reminder24hSent Boolean        @default(false)
+  reminder1hSent  Boolean        @default(false)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@map("appointments")
+}
+
+// ─── Clinical Records (Historias Clínicas) ────────────────────────────────────
+
+model ClinicalProfile {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  contactId  String   @unique
+  contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  allergies  String?
+  skinType   String?
+  conditions String?
+  medications String?
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  entries    ClinicalEntry[]
+
+  @@map("clinical_profiles")
+}
+
+model ClinicalEntry {
+  id             String          @id @default(cuid())
+  tenantId       String
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  profileId      String
+  profile        ClinicalProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  date           DateTime        @default(now())
+  treatment      String
+  products       String?
+  technique      String?
+  observations   String?
+  nextVisitNotes String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@map("clinical_entries")
+}
+
+// ─── Commissions (Comisiones) ─────────────────────────────────────────────────
+
+enum CommissionStatus {
+  PENDING
+  PAID
+}
+
+model CommissionRule {
+  id         String   @id @default(cuid())
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  percentage Decimal  @default(0) @db.Decimal(5, 2)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([tenantId, userId])
+  @@map("commission_rules")
+}
+
+model Commission {
+  id         String           @id @default(cuid())
+  tenantId   String
+  tenant     Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User             @relation(fields: [userId], references: [id])
+  incomeId   String
+  income     Income           @relation(fields: [incomeId], references: [id], onDelete: Cascade)
+  amount     Decimal          @db.Decimal(10, 2)
+  percentage Decimal          @db.Decimal(5, 2)
+  status     CommissionStatus @default(PENDING)
+  paidAt     DateTime?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@unique([incomeId])
+  @@map("commissions")
+}
+
+// ─── Quick Replies (Feature G) ────────────────────────────────────────────────
+
+model QuickReply {
+  id        String @id @default(cuid())
+  tenantId  String
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  sortOrder Int    @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("quick_replies")
 }

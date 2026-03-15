@@ -8,7 +8,7 @@ const mockChatService = {
   getMessages: jest.fn(),
 };
 
-const fakeUser = { userId: 'user-1', email: 'a@b.com', tenantId: 'tenant-1' };
+const fakeUser = { id: 'user-1', userId: 'user-1', email: 'a@b.com', tenantId: 'tenant-1', role: 'OWNER' };
 
 describe('ChatController', () => {
   let controller: ChatController;

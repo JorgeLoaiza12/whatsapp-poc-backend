@@ -57,7 +57,7 @@ describe('WebhookService', () => {
 
     service = module.get<WebhookService>(WebhookService);
 
-    mockEmitter = { emitNewMessage: jest.fn() };
+    mockEmitter = { emitNewMessage: jest.fn(), emitMessageStatus: jest.fn() };
     service.registerEmitter(mockEmitter);
   });
 

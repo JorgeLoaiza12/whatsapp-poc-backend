@@ -39,4 +39,22 @@ export class RemindersController {
   ) {
     return this.remindersService.undismiss(user.tenantId, contactId, serviceName);
   }
+
+  @Get('logs')
+  getLogs(@CurrentUser() user: AuthUser) {
+    return this.remindersService.getLogs(user.tenantId);
+  }
+
+  @Get('config')
+  getConfig(@CurrentUser() user: AuthUser) {
+    return this.remindersService.getConfig(user.tenantId);
+  }
+
+  @Post('config')
+  updateConfig(
+    @CurrentUser() user: AuthUser,
+    @Body('enabled') enabled: boolean,
+  ) {
+    return this.remindersService.updateConfig(user.tenantId, enabled);
+  }
 }

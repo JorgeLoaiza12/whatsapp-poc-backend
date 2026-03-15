@@ -6,7 +6,7 @@ import { Direction, MessageType, MessageStatus } from '@prisma/client';
 
 const mockWhatsAppService = { sendMessage: jest.fn() };
 
-const fakeUser = { userId: 'user-1', email: 'a@b.com', tenantId: 'tenant-1' };
+const fakeUser = { id: 'user-1', userId: 'user-1', email: 'a@b.com', tenantId: 'tenant-1', role: 'OWNER' };
 const fakeMessage = {
   id: 'msg-1',
   direction: Direction.OUTBOUND,

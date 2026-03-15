@@ -57,7 +57,7 @@ describe('AuthController', () => {
   });
 
   it('me() returns the current user from the guard', () => {
-    const user = { userId: 'user-1', email: 'alice@test.com', tenantId: 'tenant-1' };
+    const user = { id: 'user-1', userId: 'user-1', email: 'alice@test.com', tenantId: 'tenant-1', role: 'OWNER' };
     const result = controller.me(user);
     expect(result).toEqual(user);
   });

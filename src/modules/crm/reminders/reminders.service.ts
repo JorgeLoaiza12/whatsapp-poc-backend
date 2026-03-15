@@ -103,4 +103,31 @@ export class RemindersService {
     });
     return { ok: true };
   }
+
+  async getLogs(tenantId: string) {
+    return this.prisma.reminderLog.findMany({
+      where: { tenantId },
+      orderBy: { sentAt: 'desc' },
+      take: 100,
+      include: {
+        contact: { select: { name: true, waPhone: true } },
+      },
+    });
+  }
+
+  async getConfig(tenantId: string) {
+    const tenant = await this.prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { reminderEnabled: true },
+    });
+    return { reminderEnabled: tenant?.reminderEnabled ?? true };
+  }
+
+  async updateConfig(tenantId: string, enabled: boolean) {
+    await this.prisma.tenant.update({
+      where: { id: tenantId },
+      data: { reminderEnabled: enabled },
+    });
+    return { reminderEnabled: enabled };
+  }
 }

@@ -5,6 +5,8 @@ import {
   IsInt,
   Min,
   IsNotEmpty,
+  IsDateString,
+  Matches,
 } from 'class-validator';
 
 export class UpsertClientDto {
@@ -12,9 +14,10 @@ export class UpsertClientDto {
   @IsNotEmpty()
   name: string;
 
-  /** Phone used for WhatsApp (E.164 without +, e.g. 56951209722) */
+  /** Phone used for WhatsApp (digits only, no +, e.g. 56951209722) */
   @IsString()
   @IsNotEmpty()
+  @Matches(/^\d{7,15}$/, { message: 'waPhone must be 7-15 digits without + prefix' })
   waPhone: string;
 
   @IsOptional()
@@ -37,4 +40,8 @@ export class UpsertClientDto {
   @IsInt()
   @Min(0)
   loyaltyStamps?: number;
+
+  @IsOptional()
+  @IsDateString()
+  birthDate?: string;
 }

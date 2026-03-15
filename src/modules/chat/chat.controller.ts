@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Param, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUser } from '../../common/decorators/current-user.decorator';
@@ -8,6 +8,12 @@ import { ChatService } from './chat.service';
 @Controller('chat')
 export class ChatController {
   constructor(private readonly chatService: ChatService) {}
+
+  /** GET /api/chat/search?q=term */
+  @Get('search')
+  search(@CurrentUser() user: AuthUser, @Query('q') q: string) {
+    return this.chatService.search(user.tenantId, q);
+  }
 
   /** GET /api/chat/conversations */
   @Get('conversations')
